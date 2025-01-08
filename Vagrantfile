@@ -1,122 +1,115 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
-# All Vagrant configuration is done below. The "2" in Vagrant.configure
-# configures the configuration version (we support older styles for
-# backwards compatibility). Please don't change it unless you know what
-# you're doing.
-Vagrant.configure("2") do |config|
-  # The most common configuration options are documented and commented below.
-  # For a complete reference, please see the online documentation at
-  # https://docs.vagrantup.com.
+# This Vagrantfile requires the vagrant-hostmanager plugin.
+# Install it with: vagrant plugin install vagrant-hostmanager
+unless Vagrant.has_plugin?("vagrant-hostmanager")
+  raise "Please install vagrant-hostmanager plugin: vagrant plugin install vagrant-hostmanager"
+end
 
-  # Every Vagrant development environment requires a box. You can search for
-  # boxes at https://vagrantcloud.com/search.
+Vagrant.configure("2") do |config|
+  # Common configuration
   config.vm.box = "im2nguyen/ubuntu-24-04"
   config.vm.box_version = "0.1.0"
 
-  # Disable automatic box update checking. If you disable this, then
-  # boxes will only be checked for updates when the user runs
-  # `vagrant box outdated`. This is not recommended.
-  # config.vm.box_check_update = false
-
-  # Create a forwarded port mapping which allows access to a specific port
-  # within the machine from a port on the host machine. In the example below,
-  # accessing "localhost:8080" will access port 80 on the guest machine.
-  # NOTE: This will enable public access to the opened port
-  # config.vm.network "forwarded_port", guest: 80, host: 8080
-
-  # Create a forwarded port mapping which allows access to a specific port
-  # within the machine from a port on the host machine and only allow access
-  # via 127.0.0.1 to disable public access
-  # config.vm.network "forwarded_port", guest: 80, host: 8080, host_ip: "127.0.0.1"
-
-  # Create a private network, which allows host-only access to the machine
-  # using a specific IP.
-  # config.vm.network "private_network", ip: "192.168.33.10"
-
-  # Create a public network, which generally matched to bridged network.
-  # Bridged networks make the machine appear as another physical device on
-  # your network.
-  # config.vm.network "public_network"
-
-  # Share an additional folder to the guest VM. The first argument is
-  # the path on the host to the actual folder. The second argument is
-  # the path on the guest to mount the folder. And the optional third
-  # argument is a set of non-required options.
-  # config.vm.synced_folder "../data", "/vagrant_data"
-
-  # Disable the default share of the current code directory. Doing this
-  # provides improved isolation between the vagrant box and your host
-  # by making sure your Vagrantfile isn't accessible to the vagrant box.
-  # If you use this you may want to enable additional shared subfolders as
-  # shown above.
-  # config.vm.synced_folder ".", "/vagrant", disabled: true
-
-  # Provider-specific configuration so you can fine-tune various
-  # backing providers for Vagrant. These expose provider-specific options.
-  # Example for VirtualBox:
-  #
-  # config.vm.provider "virtualbox" do |vb|
-  #   # Display the VirtualBox GUI when booting the machine
-  #   vb.gui = true
-  #
-  #   # Customize the amount of memory on the VM:
-  #   vb.memory = "1024"
-  # end
-  #
-  # View the documentation for the provider you are using for more
-  # information on available options.
-
-  # Enable provisioning with a shell script. Additional provisioners such as
-  # Ansible, Chef, Docker, Puppet and Salt are also available. Please see the
-  # documentation for more information about their specific syntax and use.
-  # config.vm.provision "shell", inline: <<-SHELL
-  #   apt-get update
-  #   apt-get install -y apache2
-  # SHELL
-
-  # Forward port 8081 for Terramino
-  config.vm.network "forwarded_port", guest: 8081, host: 8081
-
-  # Install Docker, git, and set up Terramino
-  config.vm.provision "shell", inline: <<-SHELL
-    # Update package list
+  # Configure hostmanager
+  config.hostmanager.enabled = true
+  config.hostmanager.manage_host = true
+  config.hostmanager.manage_guest = true
+  config.hostmanager.ignore_private_ip = false  # Use private network IPs
+  
+  # Common provisioning script for all VMs
+  config.vm.provision "shell", name: "common", inline: <<-SHELL
+    # Install Docker
     apt-get update
-
-    # Install required packages
     apt-get install -y ca-certificates curl gnupg git
-
-    # Add Docker's official GPG key
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
-
-    # Add Docker repository
-    echo \
-      "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-      "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
-      tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-    # Install Docker packages
+    echo "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
     apt-get update
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-    # Add vagrant user to docker group
     usermod -aG docker vagrant
 
-    # Clone Terramino repository
-    cd /home/vagrant
-    git clone https://github.com/hashicorp-education/terramino-go.git
-    cd terramino-go
-    git checkout containerized
-
-    # Start Terramino in the background
-    docker compose up -d
-
-    # Create CLI alias
-    echo 'alias play="docker compose -f /home/vagrant/terramino-go/docker-compose.yml exec -it backend ./terramino-cli"' >> /home/vagrant/.bashrc
-    # Source the updated bashrc
-    echo "source /home/vagrant/.bashrc" >> /home/vagrant/.bash_profile
+    # Clone repo
+    if [ ! -d "/home/vagrant/terramino-go/.git" ]; then
+      git clone https://github.com/hashicorp-education/terramino-go.git /home/vagrant/terramino-go
+      cd /home/vagrant/terramino-go
+      git checkout containerized
+    fi
   SHELL
+
+  # Redis Server
+  config.vm.define "redis" do |redis|
+    redis.vm.hostname = "redis.vagrant.local"  # Use FQDN
+    redis.vm.network "private_network", type: "dhcp"
+    redis.vm.network "forwarded_port", guest: 6379, host: 6379
+    redis.vm.synced_folder "./redis/terramino-go", "/home/vagrant/terramino-go", create: true
+
+    redis.vm.provision "shell", name: "start-redis", inline: <<-SHELL
+      cd /home/vagrant/terramino-go
+      docker compose up -d redis
+    SHELL
+
+    redis.vm.provision "shell", name: "reload-redis", run: "never", inline: <<-SHELL
+      cd /home/vagrant/terramino-go
+      docker compose stop redis
+      docker compose rm -f redis
+      docker compose up -d redis
+    SHELL
+  end
+
+  # Backend Server
+  config.vm.define "backend" do |backend|
+    backend.vm.hostname = "backend.vagrant.local"  # Use FQDN
+    backend.vm.network "private_network", type: "dhcp"
+    backend.vm.network "forwarded_port", guest: 8080, host: 8080
+    backend.vm.synced_folder "./backend/terramino-go", "/home/vagrant/terramino-go", create: true
+
+    backend.vm.provision "shell", name: "start-backend", inline: <<-SHELL
+      cd /home/vagrant/terramino-go
+
+      # Configure backend to use Redis host
+      echo "REDIS_HOST=redis.vagrant.local" > .env
+      echo "REDIS_PORT=6379" >> .env
+      
+      docker compose up -d backend
+
+      # Add CLI alias
+      echo 'alias cli="docker compose exec backend ./terramino-cli"' >> /home/vagrant/.bashrc
+    SHELL
+
+    backend.vm.provision "shell", name: "reload-backend", run: "never", inline: <<-SHELL
+      cd /home/vagrant/terramino-go
+      docker compose stop backend
+      docker compose rm -f backend
+      docker compose build backend
+      docker compose up -d backend
+    SHELL
+  end
+
+  # Frontend Server
+  config.vm.define "frontend" do |frontend|
+    frontend.vm.hostname = "frontend.vagrant.local"  # Use FQDN
+    frontend.vm.network "private_network", type: "dhcp"
+    frontend.vm.network "forwarded_port", guest: 8081, host: 8081
+    frontend.vm.synced_folder "./frontend/terramino-go", "/home/vagrant/terramino-go", create: true
+
+    frontend.vm.provision "shell", name: "start-frontend", inline: <<-SHELL
+      cd /home/vagrant/terramino-go
+      
+      # Update nginx.conf to use backend hostname
+      sed -i 's/proxy_pass http:\/\/backend:8080/proxy_pass http:\/\/backend.vagrant.local:8080/' nginx.conf
+      
+      docker compose up -d frontend
+    SHELL
+
+    frontend.vm.provision "shell", name: "reload-frontend", run: "never", inline: <<-SHELL
+      cd /home/vagrant/terramino-go
+      docker compose stop frontend
+      docker compose rm -f frontend
+      docker compose build frontend
+      docker compose up -d frontend
+    SHELL
+  end
 end
