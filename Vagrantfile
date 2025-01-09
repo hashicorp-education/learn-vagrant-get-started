@@ -1,28 +1,32 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
-# This Vagrantfile requires the vagrant-hostmanager plugin.
-# Install it with: vagrant plugin install vagrant-hostmanager
-unless Vagrant.has_plugin?("vagrant-hostmanager")
-  raise "Please install vagrant-hostmanager plugin: vagrant plugin install vagrant-hostmanager"
-end
+# Service configuration reference
+SERVICES = {
+  'redis' => {
+    ip: '192.168.56.10',
+    ports: { 6379 => 6379 }
+  },
+  'backend' => {
+    ip: '192.168.56.11',
+    ports: { 8080 => 8080 }
+  },
+  'frontend' => {
+    ip: '192.168.56.12',
+    ports: { 8081 => 8081 }
+  }
+}
 
 Vagrant.configure("2") do |config|
   # Common configuration
   config.vm.box = "im2nguyen/ubuntu-24-04"
   config.vm.box_version = "0.1.0"
 
-  # Configure hostmanager
-  config.hostmanager.enabled = true
-  config.hostmanager.manage_host = true
-  config.hostmanager.manage_guest = true
-  config.hostmanager.ignore_private_ip = false  # Use private network IPs
-  
   # Common provisioning script for all VMs
   config.vm.provision "shell", name: "common", inline: <<-SHELL
     # Install Docker
     apt-get update
-    apt-get install -y ca-certificates curl gnupg git
+    apt-get install -y ca-certificates curl gnupg git avahi-daemon libnss-mdns
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
@@ -41,8 +45,8 @@ Vagrant.configure("2") do |config|
 
   # Redis Server
   config.vm.define "redis" do |redis|
-    redis.vm.hostname = "redis.vagrant.local"  # Use FQDN
-    redis.vm.network "private_network", type: "dhcp"
+    redis.vm.hostname = "redis"
+    redis.vm.network "private_network", ip: SERVICES['redis'][:ip]
     redis.vm.network "forwarded_port", guest: 6379, host: 6379
     redis.vm.synced_folder "./redis/terramino-go", "/home/vagrant/terramino-go", create: true
 
@@ -61,19 +65,32 @@ Vagrant.configure("2") do |config|
 
   # Backend Server
   config.vm.define "backend" do |backend|
-    backend.vm.hostname = "backend.vagrant.local"  # Use FQDN
-    backend.vm.network "private_network", type: "dhcp"
+    backend.vm.hostname = "backend"
+    backend.vm.network "private_network", ip: SERVICES['backend'][:ip]
     backend.vm.network "forwarded_port", guest: 8080, host: 8080
     backend.vm.synced_folder "./backend/terramino-go", "/home/vagrant/terramino-go", create: true
 
     backend.vm.provision "shell", name: "start-backend", inline: <<-SHELL
       cd /home/vagrant/terramino-go
 
-      # Configure backend to use Redis host
-      echo "REDIS_HOST=redis.vagrant.local" > .env
-      echo "REDIS_PORT=6379" >> .env
-      
-      docker compose up -d backend
+      # Get Redis IP dynamically (with 1 minute timeout)
+      for i in {1..30}; do
+        if REDIS_IP=$(getent hosts redis.local | awk '{print $1}'); then
+          break
+        fi
+        echo "Waiting for redis.local to be resolvable..."
+        sleep 2
+      done
+
+      # Run the backend container with Redis host
+      docker build -f Dockerfile.backend -t backend .
+
+      docker run -d -p 8080:8080 \
+        -e REDIS_HOST=redis.local \
+        -e REDIS_PORT=6379 \
+        -e TERRAMINO_PORT=8080 \
+        --add-host redis.local:${REDIS_IP} \
+        backend
 
       # Add CLI alias
       echo 'alias cli="docker compose exec backend ./terramino-cli"' >> /home/vagrant/.bashrc
@@ -81,35 +98,76 @@ Vagrant.configure("2") do |config|
 
     backend.vm.provision "shell", name: "reload-backend", run: "never", inline: <<-SHELL
       cd /home/vagrant/terramino-go
-      docker compose stop backend
-      docker compose rm -f backend
-      docker compose build backend
-      docker compose up -d backend
+
+      # Get Redis IP dynamically
+      REDIS_IP=$(getent hosts redis.local | awk '{print $1}')
+
+      docker stop backend || true
+      docker rm -f backend || true
+      docker build -f Dockerfile.backend -t backend .
+      docker run -d --network host -p 8080:8080 \
+        -e REDIS_HOST=redis.local \
+        -e REDIS_PORT=6379 \
+        -e TERRAMINO_PORT=8080 \
+        --add-host redis.local:${REDIS_IP} \
+        --name backend \
+        backend
     SHELL
   end
 
   # Frontend Server
   config.vm.define "frontend" do |frontend|
-    frontend.vm.hostname = "frontend.vagrant.local"  # Use FQDN
-    frontend.vm.network "private_network", type: "dhcp"
+    frontend.vm.hostname = "frontend"
+    frontend.vm.network "private_network", ip: SERVICES['frontend'][:ip]
     frontend.vm.network "forwarded_port", guest: 8081, host: 8081
     frontend.vm.synced_folder "./frontend/terramino-go", "/home/vagrant/terramino-go", create: true
 
     frontend.vm.provision "shell", name: "start-frontend", inline: <<-SHELL
       cd /home/vagrant/terramino-go
+
+      # Wait for nginx.conf to be available to update backend hostname
+      for i in {1..30}; do
+        if [ -f nginx.conf ]; then
+          break
+        fi
+        echo "Waiting for nginx.conf to be available..."
+        sleep 2
+      done
       
       # Update nginx.conf to use backend hostname
-      sed -i 's/proxy_pass http:\/\/backend:8080/proxy_pass http:\/\/backend.vagrant.local:8080/' nginx.conf
-      
-      docker compose up -d frontend
+      sed -i 's#proxy_pass http://backend:8080#proxy_pass http://backend.local:8080#' nginx.conf || {
+        echo "Failed to update nginx.conf"
+        exit 1
+      }
+
+      # Get backend IP dynamically (with 1 minute timeout)
+      for i in {1..30}; do
+        if BACKEND_IP=$(getent hosts backend.local | awk '{print $1}'); then
+          break
+        fi
+        echo "Waiting for backend.local to be resolvable..."
+        sleep 2
+      done
+
+      docker build -f Dockerfile.frontend -t frontend .
+
+      docker run -d -p 8081:8081 \
+        --add-host backend.local:${BACKEND_IP} \
+        frontend
     SHELL
 
     frontend.vm.provision "shell", name: "reload-frontend", run: "never", inline: <<-SHELL
       cd /home/vagrant/terramino-go
-      docker compose stop frontend
-      docker compose rm -f frontend
-      docker compose build frontend
-      docker compose up -d frontend
+
+      # Get backend IP dynamically
+      BACKEND_IP=$(getent hosts backend.local | awk '{print $1}')
+
+      docker stop frontend || true
+      docker rm -f frontend || true
+      docker build -f Dockerfile.frontend -t frontend .
+      docker run -d -p 8081:8081 \
+        --add-host backend.local:${BACKEND_IP} \
+        frontend
     SHELL
   end
 end
