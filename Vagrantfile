@@ -1,6 +1,3 @@
-# -*- mode: ruby -*-
-# vi: set ft=ruby :
-
 # Service configuration reference
 SERVICES = {
   'redis' => {
@@ -93,7 +90,7 @@ Vagrant.configure("2") do |config|
         backend
 
       # Add CLI alias
-      echo 'alias cli="docker compose exec backend ./terramino-cli"' >> /home/vagrant/.bashrc
+      echo 'alias play="docker compose exec backend ./terramino-cli"' >> /home/vagrant/.bashrc
     SHELL
 
     backend.vm.provision "shell", name: "reload-backend", run: "never", inline: <<-SHELL

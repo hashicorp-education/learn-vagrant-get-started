@@ -155,7 +155,7 @@ EOF
     chmod +x /usr/local/bin/reload-terramino
 
     # Add aliases
-    echo 'alias cli="docker compose -f /home/vagrant/terramino-go/docker-compose.yml exec -it backend ./terramino-cli"' >> /home/vagrant/.bashrc
+    echo 'alias play="docker compose -f /home/vagrant/terramino-go/docker-compose.yml exec -it backend ./terramino-cli"' >> /home/vagrant/.bashrc
     echo 'alias reload="sudo /usr/local/bin/reload-terramino"' >> /home/vagrant/.bashrc
     # Source the updated bashrc
     echo "source /home/vagrant/.bashrc" >> /home/vagrant/.bash_profile
@@ -427,7 +427,7 @@ Vagrant.configure("2") do |config|
         backend
 
       # Add CLI alias
-      echo 'alias cli="docker compose exec backend ./terramino-cli"' >> /home/vagrant/.bashrc
+      echo 'alias play="docker compose exec backend ./terramino-cli"' >> /home/vagrant/.bashrc
     SHELL
 
     backend.vm.provision "shell", name: "reload-backend", run: "never", inline: <<-SHELL

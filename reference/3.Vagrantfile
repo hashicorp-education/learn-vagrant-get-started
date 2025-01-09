@@ -130,7 +130,7 @@ EOF
     chmod +x /usr/local/bin/reload-terramino
 
     # Add aliases
-    echo 'alias cli="docker compose -f /home/vagrant/terramino-go/docker-compose.yml exec -it backend ./terramino-cli"' >> /home/vagrant/.bashrc
+    echo 'alias play="docker compose -f /home/vagrant/terramino-go/docker-compose.yml exec -it backend ./terramino-cli"' >> /home/vagrant/.bashrc
     echo 'alias reload="sudo /usr/local/bin/reload-terramino"' >> /home/vagrant/.bashrc
     # Source the updated bashrc
     echo "source /home/vagrant/.bashrc" >> /home/vagrant/.bash_profile
