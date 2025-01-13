@@ -267,7 +267,7 @@ Update the `Vagrantfile` to enable folder synching from the host machine's `./te
 
 ```
 # Sync the terramino-go directory
-config.vm.synced_folder "./terramino-go", "/home/vagrant/terramino-go"
+config.vm.synced_folder "./terramino-go", "/home/vagrant/terramino-go", create: true
 ```
 
 Reload the box to sync the two directories.
